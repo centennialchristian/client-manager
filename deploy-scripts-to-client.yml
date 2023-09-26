@@ -1,0 +1,53 @@
+---
+- name: "Deploy ProfileManager to client for testing"
+  vars:
+    ansible_shell_type: "cmd"
+    osd_dir: "{{ ansible_facts.env.ProgramData }}\\osd"
+
+  hosts: "{{ host }}"
+
+  gather_facts: true
+
+  collections:
+    - "community.windows"
+
+  tasks:
+    # - name: "Download PSTools"
+    #   ansible.windows.win_get_url:
+    #     dest: "{{ osd_dir }}\\PSTools.zip"
+    #     follow_redirects: "safe"
+    #     url: "https://download.sysinternals.com/files/PSTools.zip"
+
+    # - name: "Install PSCX Module"
+    #   community.windows.win_psmodule:
+    #     accept_license: true
+    #     allow_clobber: true
+    #     name: "Pscx"
+    #     state: "present"
+
+    # - name: "Unzip PSTools"
+    #   community.windows.win_unzip:
+    #     creates: "{{ ansible_facts.env.ProgramFiles }}\\Sysinternals\\PsExec64.exe"
+    #     dest: "{{ ansible_facts.env.ProgramFiles }}\\Sysinternals"
+    #     recurse: true
+    #     src: "{{ osd_dir }}\\PSTools.zip"
+
+    # - name: "Add Sysinternals to PATH"
+    #   ansible.windows.win_path:
+    #     elements:
+    #       - "%ProgramFiles%\\Sysinternals"
+    #     name: "PATH"
+    #     scope: "machine"
+    #     state: "present"
+
+    # - name: "Create ProfileManager dir"
+    #   ansible.windows.win_file:
+    #     path: "{{ osd_dir }}\\ProfileManager"
+    #     state: "directory"
+
+    - name: "Copy script files to client"
+      ansible.windows.win_copy:
+        dest: "{{ osd_dir }}\\ProfileManager\\{{ item | basename }}"
+        src: "{{ item }}"
+      loop:
+        - "{{ playbook_dir }}/ProfileManager.ps1"
