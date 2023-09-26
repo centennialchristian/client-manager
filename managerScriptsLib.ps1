@@ -1,7 +1,19 @@
 
-class EventNotFound : System.Exception {}
-class EventInvalidLogonType : System.Exception {}
+class EventNotFound : System.Exception {};
+class EventInvalidLogonType : System.Exception {};
+class EventInvalidUserType : System.Exception {};
 
+Function Is-ValidateUserType {
+  param(
+    [Parameter(Mandatory=$true,Position=0)][String]$DomainName,
+    [Parameter(Mandatory=$true,Position=1)][String]$UserName
+  );
+
+  $systemDomains = @('NT AUTHORITY','Font Driver Host','Window Manager');
+  $sysDomainsRegex = "($($systemDomains | Foreach-Object { [Regex]::Escape($_)}))";
+
+  $DomainName -notmatch "^$sysDomainsRegex\\" -and $UserName -match '.+' -and -not ($UserName -like "Administrator" -and $DomainName -like "$env:COMPUTERNAME")
+}
 Function Get-UserFromEvent {
   param($EventRecordId,$EventChannel);
 
@@ -27,6 +39,10 @@ Function Get-UserFromEvent {
     throw [EventInvalidLogonType]"Logon type is not interactive or terminal services.";
   }
 
+  if (-not (Is-ValidateUserType -DomainName $logonDomain -UserName $logonUser)) {
+    throw [EventInvalidUserType]"'$logonDomain\$logonUser' is a system user.";
+  }
+
   return [PSCustomObject]@{
     UserName = $logonUser;
     DomainName = $logonDomain;
@@ -37,13 +53,13 @@ Function Get-LoggedOnUsers {
   ## users with processes running exploer.exe
   $systemDomains = @('NT AUTHORITY','Font Driver Host','Window Manager');
   $sysDomainsRegex = "($($systemDomains | Foreach-Object { [Regex]::Escape($_)}))";
-  Get-CimInstance -ClassName Win32_Process -Filter "Name='explorer.exe'" |
-    Foreach-Object -Process { Invoke-CimMethod -InputObject $_ -MethodName 'GetOwner' } |
-    Where-Object -FilterScript { $_.Domain -notmatch "($($systemDomains -join '|'))" -and $_.User -match '.+' -and -not ($_.User -like 'Administrator' -and $_.Domain -like $env:COMPUTERNAME)}
+  # Get-CimInstance -ClassName Win32_Process -Filter "Name='explorer.exe'" |
+  #   Foreach-Object -Process { Invoke-CimMethod -InputObject $_ -MethodName 'GetOwner' } |
+  #   Where-Object -FilterScript { $_.Domain -notmatch "($($systemDomains -join '|'))" -and $_.User -match '.+' -and -not ($_.User -like 'Administrator' -and $_.Domain -like $env:COMPUTERNAME)}
   
-  Get-Process -IncludeUserName |
-    Where-Object -FilterScript { $_.Name!='powershell.exe' and Name!='cmd.exe' and Name!='pwsh.exe' and Name!='conhost.exe' and Name!='sshd.exe' and Name!='mmc.exe'" }
-    Where-Object -FilterScript { $_.UserName -notmatch "^$sysDomainsRegex\\" -and $_.UserName -match '.+' -and $_.UserName -notlike "$env:COMPUTERNAME\Administrator"}
+  # Where-Object -FilterScript { $_.Name -ne 'powershell.exe' -and Name -ne 'cmd.exe' -and Name -ne 'pwsh.exe' -and Name -ne 'conhost.exe' -and Name -ne 'sshd.exe' -and Name -ne 'mmc.exe'" }
+  Get-Process -Name explorer -IncludeUserName -ErrorAction SilentlyContinue |
+    Where-Object -FilterScript { Is-ValidateUserType -DomainName $($_.UserName -replace '^([^\\]+)\\.*','$1') -UserName $($_.UserName -replace '^[^\\]+\\','') }
 
   ## get session Ids of typer interactive (2) or interactive over terminal services (10)
   $logonIds = Get-CimInstance -ClassName Win32_LogonSession -Filter "LogonType=2 or LogonType=10" |
@@ -156,24 +172,36 @@ public class WinApi
   [WinApi]::WTSQueryUserToken($SessionId,[ref] $userToken);
   $envBlock = [IntPtr]::Zero;
   ## Create environment block with current environment
-  [void][WinApi]::CreateEnvironmentBlock([ref] $envBlock,$userToken,$true);
+  if (-not [WinApi]::CreateEnvironmentBlock([ref] $envBlock,$userToken,$true)) {
+    $lastWinError = [Marshal]::GetLastError();
+    throw "Unable to create Environment block. Error code $lastWinError";
+  }
 
-  $startupInfo = [WinApi+STARTUPINFO]::new();
-  $startupInfo.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($startupInfo);
-  $procInfo = [WinApi+PROCESS_INFORMATION]::new();
-  [WinApi]::CreateProcessAsUserA(
-    $userToken,
-    [IntPtr]::Zero,
-    $CommandLine,
-    [IntPtr]::Zero,
-    [IntPtr]::Zero,
-    $false,
-    $CREATE_NO_NEW_WINDOW+$CREATE_UNICODE_ENVIRONMENT,
-    $envBlock,
-    $WorkingDir,
-    [ref] $startupInfo,
-    [ref] $procInfo
-  );
+  try {
+    $startupInfo = [WinApi+STARTUPINFO]::new();
+    $startupInfo.cb = [System.Runtime.InteropServices.Marshal]::SizeOf($startupInfo);
+    $procInfo = [WinApi+PROCESS_INFORMATION]::new();
+    $createdProc = [WinApi]::CreateProcessAsUserA(
+      $userToken,
+      [IntPtr]::Zero,
+      $CommandLine,
+      [IntPtr]::Zero,
+      [IntPtr]::Zero,
+      $false,
+      $CREATE_NO_NEW_WINDOW+$CREATE_UNICODE_ENVIRONMENT,
+      $envBlock,
+      $WorkingDir,
+      [ref] $startupInfo,
+      [ref] $procInfo
+    );
+
+    if (-not $createdProc) {
+      $lastWinError = [Marshal]::GetLastError();
+      throw "Unable to create process. Error code $lastWinError .";
+    }
+  } finally {
+    [void][WinApi]::DestroyEnvironmentBlock($envBlock);
+  }
 }
 
 Function Get-LoggedOnUserState {

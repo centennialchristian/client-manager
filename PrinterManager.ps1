@@ -29,17 +29,8 @@ try {
     $eventUser = $null;
     try {
       $eventUser = Get-UserFromEvent -EventRecordId $EventRecordId -EventChannel $EventChannel;
-    } catch [EventInvalidLogonType] {
-      Write-Output "Logon type for event is not interactive or terminal services. Will not run.";
-      exit;
-    } catch [EventNotFound] {
-      Write-Output "Did not find specified logon event.";
-      exit;
-    }
-
-    ## If the user is some kind of system type account then do not run
-    if (($eventUser.UserName -match '^(DWM-[0-9]+|UMFD-[0-9]+|(LOCAL|NETWORK) SERVICE)' -and $eventUser.DomainName -like $env:COMPUTERNAME) -or ($eventUser.UserName -like 'SYSTEM' -and $eventUser.DomainName -like 'NT AUTHORITY')) {
-      Write-Output "User is a system type user. Will not run.";
+    } catch [EventInvalidLogonType],[EventNotFound],[EventInvalidUserType] {
+      Write-Output "$($_.Exception.Message)";
       exit;
     }
 
