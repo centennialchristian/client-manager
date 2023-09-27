@@ -1,0 +1,1 @@
+(Get-Date).ToString() | Add-Content -Path "$env:ProgramData\osd\ClientManager\PrinterManager\test-userscript.txt"

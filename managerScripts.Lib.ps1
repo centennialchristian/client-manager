@@ -229,7 +229,7 @@ $global:ComputerState = @{
   'ComputerGroups' = $null;
   'DomainJoined' = $null;
   'SystemType' = $null;
-  'Win32_Bios' = $null;
+  'Win32_BIOS' = $null;
   'Win32_ComputerSystem' = $null;
   'Win32_OperatingSystem' = $null;
 }

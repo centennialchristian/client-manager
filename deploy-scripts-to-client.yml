@@ -12,45 +12,61 @@
     - "community.windows"
 
   tasks:
-    # - name: "Download PSTools"
-    #   ansible.windows.win_get_url:
-    #     dest: "{{ osd_dir }}\\PSTools.zip"
-    #     follow_redirects: "safe"
-    #     url: "https://download.sysinternals.com/files/PSTools.zip"
+    - name: "Download PSTools"
+      ansible.windows.win_get_url:
+        dest: "{{ osd_dir }}\\PSTools.zip"
+        follow_redirects: "safe"
+        url: "https://download.sysinternals.com/files/PSTools.zip"
 
-    # - name: "Install PSCX Module"
-    #   community.windows.win_psmodule:
-    #     accept_license: true
-    #     allow_clobber: true
-    #     name: "Pscx"
-    #     state: "present"
+    - name: "Install PSCX Module"
+      community.windows.win_psmodule:
+        accept_license: true
+        allow_clobber: true
+        name: "Pscx"
+        state: "present"
 
-    # - name: "Unzip PSTools"
-    #   community.windows.win_unzip:
-    #     creates: "{{ ansible_facts.env.ProgramFiles }}\\Sysinternals\\PsExec64.exe"
-    #     dest: "{{ ansible_facts.env.ProgramFiles }}\\Sysinternals"
-    #     recurse: true
-    #     src: "{{ osd_dir }}\\PSTools.zip"
+    - name: "Unzip PSTools"
+      community.windows.win_unzip:
+        creates: "{{ ansible_facts.env.ProgramFiles }}\\Sysinternals\\PsExec64.exe"
+        dest: "{{ ansible_facts.env.ProgramFiles }}\\Sysinternals"
+        recurse: true
+        src: "{{ osd_dir }}\\PSTools.zip"
 
-    # - name: "Add Sysinternals to PATH"
-    #   ansible.windows.win_path:
-    #     elements:
-    #       - "%ProgramFiles%\\Sysinternals"
-    #     name: "PATH"
-    #     scope: "machine"
-    #     state: "present"
+    - name: "Add Sysinternals to PATH"
+      ansible.windows.win_path:
+        elements:
+          - "%ProgramFiles%\\Sysinternals"
+        name: "PATH"
+        scope: "machine"
+        state: "present"
 
-    - name: "Create ClientManager dir"
+    - name: "Create Manager dirs"
       ansible.windows.win_file:
-        path: "{{ osd_dir }}\\ClientManager"
+        path: "{{ osd_dir }}\\ClientManager\\{{ item }}"
         state: "directory"
+      loop:
+        - "PrinterManager"
+        - "ProfileManager"
+
+    - name: "Create PrinterManager usersscripts dir"
+      ansible.windows.win_file:
+        path: "{{ osd_dir }}\\ClientManager\\PrinterManager\\AsUserScripts"
+        state: "directory"
+
+    - name: "Copy script files to client (subdirs)"
+      ansible.windows.win_copy:
+        dest: "{{ osd_dir }}\\ClientManager\\{{ item.subdir }}\\{{ item.src | basename }}"
+        src: "{{ item.src }}"
+      loop:
+        - {subdir: "ProfileManager", src: "{{ playbook_dir }}/ProfileManager.ps1" }
+        - {subdir: "PrinterManager", src: "{{ playbook_dir }}/PrinterManager.ps1" }
+        - {subdir: "PrinterManager\\AsUserScripts", src: "{{ playbook_dir }}/test.userscript.ps1" }
 
     - name: "Copy script files to client"
       ansible.windows.win_copy:
         dest: "{{ osd_dir }}\\ClientManager\\{{ item | basename }}"
         src: "{{ item }}"
       loop:
-        - "{{ playbook_dir }}/ProfileManager.ps1"
-        - "{{ playbook_dir }}/PrinterManager.ps1"
         - "{{ playbook_dir }}/managerScripts.Lib.ps1"
-        - "{{ playbook_dir }}/start-powershell-as-system.cmd"
+        - "{{ playbook_dir }}/start-powershell-as-system.cmd" 
+        - "{{ playbook_dir }}/test.lib.ps1"
