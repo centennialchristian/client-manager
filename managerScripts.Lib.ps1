@@ -222,7 +222,7 @@ $PC_SYSTEM_TYPE = @{
   8 = 'Maximum';
 }
 
-$env:ComputerState = @{
+$global:ComputerState = @{
   'ADComputer' = $null;
   'ADSite' = $null;
   'BootMode' = $null;
@@ -235,23 +235,23 @@ $env:ComputerState = @{
 }
 
 if (& $env:SystemRoot\System32\bcdedit.exe | Select-String -Pattern 'path.*efi') {
-  $env:ComputerState['BootMode'] = 'Ueif';
+  $global:ComputerState['BootMode'] = 'Ueif';
 } else {
-  $env:ComputerState['BootMode'] = 'Legacy';
+  $global:ComputerState['BootMode'] = 'Legacy';
 }
 
-$env:ComputerState['Win32_BIOS'] =  Get-CimInstance -ClassName Win32_BIOS | Select-Object -ExcludeProperty PSComputerName,CimClass,CimInstanceProperties,CimSystemProperties;
-$env:ComputerState['Win32_ComputerSystem'] = Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object -ExcludeProperty PSComputerName,CimClass,CimInstanceProperties,CimSystemProperties;
-$env:ComputerState['Win32_OperatingSystem'] = Get-CimInstance -ClassName Win32_OperatingSystem | Select-Object -ExcludeProperty PSComputerName,CimClass,CimInstanceProperties,CimSystemProperties;
+$global:ComputerState['Win32_BIOS'] =  Get-CimInstance -ClassName Win32_BIOS | Select-Object -ExcludeProperty PSComputerName,CimClass,CimInstanceProperties,CimSystemProperties;
+$global:ComputerState['Win32_ComputerSystem'] = Get-CimInstance -ClassName Win32_ComputerSystem | Select-Object -ExcludeProperty PSComputerName,CimClass,CimInstanceProperties,CimSystemProperties;
+$global:ComputerState['Win32_OperatingSystem'] = Get-CimInstance -ClassName Win32_OperatingSystem | Select-Object -ExcludeProperty PSComputerName,CimClass,CimInstanceProperties,CimSystemProperties;
 
-$env:ComputerState['DomainJoined'] = $env:ComputerState['Win32_ComputerSystem'].PartOfDomain;
-if ($env:ComputerState['DomainJoined']) {
+$global:ComputerState['DomainJoined'] = $global:ComputerState['Win32_ComputerSystem'].PartOfDomain;
+if ($global:ComputerState['DomainJoined']) {
   Add-Type -AssemblyName System.DirectoryServices.AccountManagement;
   Add-Type -AssemblyName System.DirectoryServices.ActiveDirectory;
   $context = [System.DirectoryServices.AccountManagement.PrincipalContext]::new([System.DirectoryServices.AccountManagement.ContextType]::Domain);
-  $env:ComputerState['ADComputer'] = [System.DirectoryServices.AccountManagement.ComputerPrincipal]::FindByIdentity($context, $env:COMPUTERNAME);
-  $env:ComputerState['CompGroups'] = $adComputer.GetGroups();
-  $env:ComputerState['ADSite'] = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite();
+  $global:ComputerState['ADComputer'] = [System.DirectoryServices.AccountManagement.ComputerPrincipal]::FindByIdentity($context, $env:COMPUTERNAME);
+  $global:ComputerState['CompGroups'] = $adComputer.GetGroups();
+  $global:ComputerState['ADSite'] = [System.DirectoryServices.ActiveDirectory.ActiveDirectorySite]::GetComputerSite();
   Remove-Variable -Name context -ErrorAction SilentlyContinue;
 }
 
@@ -284,8 +284,8 @@ $adminAccountsToAdd = @(
   'Administrators'
 );
 
-if ($env:ComputerState['DomainJoined']) {
-  $adminAccountsToAdd += "$($env:ComputerState['Win32_ComputerSystem'].Domain)\Domain Admins";
+if ($global:ComputerState['DomainJoined']) {
+  $adminAccountsToAdd += "$($global:ComputerState['Win32_ComputerSystem'].Domain)\Domain Admins";
 }
 
 # give administrative accounts explicit permission

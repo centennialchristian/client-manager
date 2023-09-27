@@ -8,7 +8,7 @@ param(
   [String]$EventChannel
 );
 
-. "$PSScriptRoot\managerScriptsLib.ps1";
+. "$PSScriptRoot\managerScripts.Lib.ps1";
 
 $global:PRINTER_MGR_LOCAL_DIR = "$($osdDirs['Root'])\PrinterManager";
 $PRINTER_DRIVER_REMOTE_DIR = "$PSScriptRoot\PrinterDrivers";

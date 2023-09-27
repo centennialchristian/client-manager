@@ -40,14 +40,17 @@
     #     scope: "machine"
     #     state: "present"
 
-    # - name: "Create ProfileManager dir"
-    #   ansible.windows.win_file:
-    #     path: "{{ osd_dir }}\\ProfileManager"
-    #     state: "directory"
+    - name: "Create ClientManager dir"
+      ansible.windows.win_file:
+        path: "{{ osd_dir }}\\ClientManager"
+        state: "directory"
 
     - name: "Copy script files to client"
       ansible.windows.win_copy:
-        dest: "{{ osd_dir }}\\ProfileManager\\{{ item | basename }}"
+        dest: "{{ osd_dir }}\\ClientManager\\{{ item | basename }}"
         src: "{{ item }}"
       loop:
         - "{{ playbook_dir }}/ProfileManager.ps1"
+        - "{{ playbook_dir }}/PrinterManager.ps1"
+        - "{{ playbook_dir }}/managerScripts.Lib.ps1"
+        - "{{ playbook_dir }}/start-powershell-as-system.cmd"
