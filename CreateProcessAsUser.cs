@@ -1,8 +1,11 @@
 using System;
+using System.DateTime;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Thread.
 
-class ProcessAsUser {
+public class ProcessAsUser : IDisposable {
+  private bool disposed = false;
   private const int CREATE_UNICODE_ENVIRONMENT = 0x00000400;
   private const int CREATE_NO_WINDOW = 0x08000000;
   private const int WINDOW_HIDE = 0;
@@ -10,19 +13,51 @@ class ProcessAsUser {
   private IntPtr hUserToken = IntPtr.Zero;
   private IntPtr phEnvironment = IntPtr.Zero;
 
-  private PROCESS_INFORMATION ProcessInfo = PROCESS_INFORMATION();
+  private IntPtr hStdoutReadHandle = IntPtr.Zero;
+  private IntPtr hStdoutWriteHandle = IntPtr.Zero;
+  private IntPtr hStderrReadHandle = IntPtr.Zero;
+  private IntPtr hStderrWriteHandle = IntPtr.Zero;
 
-  public ProcessAsUser(int SessionId, string CommandLine, string WorkingDir, TimeSpan Timeout) {
+  private PROCESS_INFORMATION ProcessInfo = PROCESS_INFORMATION();
+  private STARTUPINFO startInfo = STARTUPINFO();
+
+  public CreateProcessAsUser(int SessionId, string CommandLine, string WorkingDir) {
     
-    if (!WTSQueryUserToken(SessionId, ref hUserToken)) {
+    IntPtr hImpersonateToken = IntPtr.Zero;
+    if (!WTSQueryUserToken(SessionId, ref hImpersonateToken)) {
       throw new Exception("Unable to acquire user token from SessionId '"+SessionId.ToString()+'"');
+    }
+
+    bool dupTokenSuccess = DuplicateTokenEx(
+      hImpersonateToken,
+      0,
+      IntPtr.Zero,
+      (int)SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
+      (int)TOKEN_TYPE.TokenPrimary,
+      ref hUserToken
+    );
+    CloseHandle(hImpersonateToken);
+    if (!dupTokenSuccess) {
+      throw new Exception("Unable to create a primary user token. Error code = "+Marshal.GetLastWin32Error());
     }
 
     STARTUPINFO startInfo = STARTUPINFO();
     startInfo.cb = Marshal.SizeOf(typeof(STARTUPINFO));
     startInfo.wShowWindow = WINDOW_HIDE;
+    
+    if (!CreatePipe(out hStdoutReadHandle, out hStdoutWriteHandle, IntPtr.Zero, 0)) {
+      CloseHandle(hUserToken);
+      throw Exception("Unable to create Pipe for stdout. Error code = "+Marshal.GetLastWin32Error());
+    }
+    if (!CreatePipe(out hStderrReadHandle, out hStderrWriteHandle, IntPtr.Zero, 0)) {
+      CloseHandle(hUserToken);
+      throw Exception("Unable to create Pipe for stderr. Error code = "+Marshal.GetLastWin32Error());
+    }
 
-    if (!CreateProcessAsUserA(
+    startInfo.hStdOutput = hStdoutWriteHandle;
+    startInfo.hStdError = hStderrWriteHandle;
+
+    bool procCreateSuccess = CreateProcessAsUserA(
       hUserToken,
       IntPtr.Zero, // Application Name
       CommandLine, // Command Line
@@ -30,31 +65,77 @@ class ProcessAsUser {
       IntPtr.Zero,
       false,
       CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-      phEnvironment,
+      IntPtr.Zero,
       WorkingDir, // Working directory
       ref startInfo,
       out ProcessInfo
-    )) {
-      CloseHandle(hUserToken);
+    );
+    if (!procCreateSuccess) {
       throw new Exception("Failed to create process as user for SessionId '"+SessionId.ToString()+"'. Error code = "+Marshal.GetLastWin32Error());
     }
-    try {
-      
-    } finally {
-      if (hUserToken != IntPtr.Zero) {
-        CloseHandle(hUserToken);
-      }
-      if (hProcEnv != IntPtr.Zero) {
-        CloseHandle(hProcEnv);
-      }
-      if (procInfo.hThread != IntPtr.Zero) {
-        CloseHandle(procInfo.hThread);
-      }
-      if (procInfo.hProcess != IntPtr.Zero) {
-        CloseHandle(procInfo.hProcess);
+  }
+
+  public void Dispose() {
+    Dispose(true);
+
+    if (ProcessInfo.hThread != IntPtr.Zero) {
+      CloseHandle(ProcessInfo.hThread);
+    }
+    if (ProcessInfo.hProcess != IntPtr.Zero) {
+      CloseHandle(ProcessInfo.hProcess);
+    }
+    if (hStderrReadHandle != IntPtr.Zero) {
+      CloseHandle(hStderrReadHandle);
+    }
+    if (hStderrWriteHandle != IntPtr.Zero) {
+      CloseHandle(hStderrWriteHandle);
+    }
+    if (hStdoutReadHandle != IntPtr.Zero) {
+      CloseHandle(hStdoutReadHandle);
+    }
+    if (hStdoutWriteHandle != IntPtr.Zero) {
+      CloseHandle(hStdoutWriteHandle);
+    }
+    if (hUserToken != IntPtr.Zero) {
+      CloseHandle(hUserToken);
+    }
+  }
+
+  public string GetStdout() {
+    string stdout;
+    FileStream stdoutStream = new FileStream(hStdoutReadHandle);
+    StreamReader stdoutReader = new StreamReader(stdoutStream);
+    if ((stdout = stdoutReader.ReadLine()) != null) {
+      string line;
+      while ((line = stdoutReader.ReadLine()) != null) {
+        stdout = stdout+"\n"+line;
       }
     }
+    return stdout;
+  }
 
+  public string GetStderr() {
+    stdoutReader.Close();
+    string stderr;
+    FileStream stderrStream = new FileStream(hStderrReadHandle);
+    StreamReader stderrReader = new StreamReader(stderrStream);
+    if ((stderr = stderrReader.ReadLine()) != null) {
+      string line;
+      while ((line = stderrReader.ReadLine()) != null) {
+        stderr = stderr+"\n"+line;
+      }
+    }
+    stderrReader.Close();
+    return stderr;
+  }
+
+  public void TerminateProcess() {
+  try {
+    Process proc = GetProcessById(ProcessInfo.dwProcessId);
+    if (!proc.HasExited) {
+      proc.Kill();
+    }
+  } catch { }
   }
 
   [StructLayout(LayoutKind.Sequential)]
@@ -106,12 +187,12 @@ class ProcessAsUser {
     TokenImpersonation = 2
   }
 
-  [DllImport("userenv.dll", SetLastError = true, CharSet = CharSet.Auto)]
-  private extern bool CreateEnvironmentBlock(out IntPtr lpEnvironment, IntPtr hToken, bool bInherit);
-
   [DllImport("kernel32.dll", SetLastError = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   private extern bool CloseHandle(IntPtr hObject);
+
+  [DllImport("userenv.dll", SetLastError = true, CharSet = CharSet.Auto)]
+  private extern bool CreateEnvironmentBlock(out IntPtr lpEnvironment, IntPtr hToken, bool bInherit);
 
   [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
   private extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, IntPtr lpSECURITY_ATTRIBUTES, uint nSize);
