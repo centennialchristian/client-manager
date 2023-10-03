@@ -62,12 +62,22 @@
     #     - {subdir: "PrinterManager", src: "{{ playbook_dir }}/PrinterManager.ps1" }
     #     - {subdir: "PrinterManager\\AsUserScripts", src: "{{ playbook_dir }}/test.userscript.ps1" }
 
-    - name: "Copy script files to client"
+    # - name: "Copy script files to client"
+    #   ansible.windows.win_copy:
+    #     dest: "{{ osd_dir }}\\ClientManager\\{{ item | basename }}"
+    #     src: "{{ item }}"
+    #   loop:
+    #     - "{{ playbook_dir }}/managerScripts.Lib.ps1"
+    #     - "{{ playbook_dir }}/start-powershell-as-system.cmd" 
+    #     - "{{ playbook_dir }}/test.lib.ps1"
+    #     - "{{ playbook_dir }}/CreateProcessAsUser.cs"
+
+    - name: "Temp C# project"
       ansible.windows.win_copy:
-        dest: "{{ osd_dir }}\\ClientManager\\{{ item | basename }}"
-        src: "{{ item }}"
-      loop:
-        - "{{ playbook_dir }}/managerScripts.Lib.ps1"
-        - "{{ playbook_dir }}/start-powershell-as-system.cmd" 
-        - "{{ playbook_dir }}/test.lib.ps1"
-        - "{{ playbook_dir }}/ServiceUI.exe"
+        dest: "{{ osd_dir }}\\ClientManager"
+        src: "{{ playbook_dir }}/ProcessProject"
+
+    # - name: "Cleanup old files"
+    #   ansible.windows.win_file:
+    #     path: "{{ osd_dir }}\\ClientManager\\ServiceUI.exe"
+    #     state: "absent"
