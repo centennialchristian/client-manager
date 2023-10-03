@@ -14,35 +14,37 @@ void main() {
   string WorkingDir = "C:\\Users\\trolleman\\AppData\\Local";
   Process[] explorerProcs = Process.GetProcessesByName("explorer");
   if (explorerProcs.Length > 0) {
-    ClientManager.ProcessAsUser UserProc = new ProcessAsUser();
-    try {
-      UserProc.Start(explorerProcs[0].SessionId,CommandLine,WorkingDir);
-    } catch (Exception ex) {
-      Console.WriteLine("unable to start process: "+ex.Message);
-      return;
-    }
-    Process scriptProcess = Process.GetProcessById(UserProc.ProcessId);
+    
+    using (ClientManager.ProcessAsUser UserProc = new ProcessAsUser()) {
+      try {
+        UserProc.Start(explorerProcs[0].SessionId,CommandLine,WorkingDir);
+      } catch (Exception ex) {
+        Console.WriteLine("unable to start process: "+ex.Message);
+        return;
+      }
+      Process scriptProcess = Process.GetProcessById(UserProc.ProcessId);
 
-    while (!scriptProcess.HasExited) {
-      Thread.Sleep(500);
-    }
+      while (!scriptProcess.HasExited) {
+        Thread.Sleep(500);
+      }
 
-    string? stdout = UserProc.GetStdout();
-    string? stderr = UserProc.GetStderr();
+      string? stdout = UserProc.GetStdout();
+      string? stderr = UserProc.GetStderr();
 
-    if (stdout != null) {
-      Console.WriteLine("Standard Out:\n"+stdout+"\n");
+      if (stdout != null) {
+        Console.WriteLine("Standard Out:\n"+stdout+"\n");
+      } else {
+        Console.WriteLine("Standard Out was null");
+      }
+
+      if (stderr != null) {
+        Console.WriteLine("Standard Error:\n"+stderr+"\n");
+      } else {
+        Console.WriteLine("Standard Error was null");
+      }
     } else {
-      Console.WriteLine("Standard Out was null");
+      Console.WriteLine("Did not find any process with name of 'explorer'");
     }
-
-    if (stderr != null) {
-      Console.WriteLine("Standard Error:\n"+stderr+"\n");
-    } else {
-      Console.WriteLine("Standard Error was null");
-    }
-  } else {
-    Console.WriteLine("Did not find any process with name of 'explorer'");
   }
 }
 
@@ -125,9 +127,12 @@ namespace ClientManager {
 
     private PROCESS_INFORMATION ProcessInfo;
 
+    private IntPtr hAccessToken;
     private IntPtr hEnvironment;
     private IntPtr hStdoutPipeRead;
+    private IntPtr hStdoutPipeWrite;
     private IntPtr hStderrPipeRead;
+    private IntPtr hStderrPipeWrite;
 
     ~ProcessAsUser() {
       Dispose();
@@ -136,8 +141,11 @@ namespace ClientManager {
     public ProcessAsUser() {}
 
     public void Dispose() {
+      Win32Native.CloseHandle(hAccessToken);
       Win32Native.CloseHandle(hStderrPipeRead);
+      Win32Native.CloseHandle(hStderrPipeWrite);
       Win32Native.CloseHandle(hStdoutPipeRead);
+      Win32Native.CloseHandle(hStdoutPipeWrite);
       Win32Native.CloseHandle(ProcessInfo.hProcess);
       Win32Native.CloseHandle(ProcessInfo.hThread);
       Win32Native.DestroyEnvironmentBlock(this.hEnvironment);
@@ -204,14 +212,13 @@ namespace ClientManager {
 
       SECURITY_ATTRIBUTES duplicateTokenAttrs =  new SECURITY_ATTRIBUTES();
       duplicateTokenAttrs.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
-      IntPtr hAccessToken;
       bool dupTokenSuccess = Win32Native.DuplicateTokenEx(
         hImpersonateToken,
         (int)(TOKEN_ACCESS_LEVEL.Query | TOKEN_ACCESS_LEVEL.Duplicate | TOKEN_ACCESS_LEVEL.AssignPrimary | TOKEN_ACCESS_LEVEL.Impersonate),
         duplicateTokenAttrs,
         (int)SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
         (int)TOKEN_TYPE.TokenPrimary,
-        out hAccessToken
+        out this.hAccessToken
       );
       int dupTokenWin32Error = Marshal.GetLastWin32Error();
       Win32Native.CloseHandle(hImpersonateToken);
@@ -220,18 +227,18 @@ namespace ClientManager {
       }
 
       IntPtr hStdoutPipeWrite;
-      if (!Win32Native.CreatePipe(out this.hStdoutPipeRead, out hStdoutPipeWrite, IntPtr.Zero, 0)) {
+      if (!Win32Native.CreatePipe(out this.hStdoutPipeRead, out this.hStdoutPipeWrite, IntPtr.Zero, 0)) {
         int lastWin32Error = Marshal.GetLastWin32Error();
-        Win32Native.CloseHandle(hAccessToken);
+        Win32Native.CloseHandle(this.hAccessToken);
         throw new Exception("Unable to create Pipe for stdout. Error code = "+lastWin32Error.ToString());
       }
 
       IntPtr hStderrPipeWrite;
-      if (!Win32Native.CreatePipe(out this.hStderrPipeRead, out hStderrPipeWrite, IntPtr.Zero, 0)) {
+      if (!Win32Native.CreatePipe(out this.hStderrPipeRead, out this.hStderrPipeWrite, IntPtr.Zero, 0)) {
         int lastWin32Error = Marshal.GetLastWin32Error();
-        Win32Native.CloseHandle(hAccessToken);
+        Win32Native.CloseHandle(this.hAccessToken);
         Win32Native.CloseHandle(this.hStdoutPipeRead);
-        Win32Native.CloseHandle(hStdoutPipeWrite);
+        Win32Native.CloseHandle(this.hStdoutPipeWrite);
         throw new Exception("Unable to create Pipe for stderr. Error code = "+lastWin32Error.ToString());
       }
 
@@ -243,12 +250,12 @@ namespace ClientManager {
       ProcStartInfo.hStdOutput = hStdoutPipeWrite;
       ProcStartInfo.hStdError = hStderrPipeWrite;
 
-      Win32Native.CreateEnvironmentBlock(out this.hEnvironment, hAccessToken, false);
+      Win32Native.CreateEnvironmentBlock(out this.hEnvironment, this.hAccessToken, false);
 
       Console.WriteLine("CommandLine = "+CommandLine);
       // dwCreationFlags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
-      bool procCreateSuccess = Win32Native.CreateProcessAsUserA(
-        hAccessToken,
+      bool procCreateSuccess = Win32Native.CreateProcessAsUserW(
+        this.hAccessToken,
         null, // Application Name
         CommandLine, // Command Line
         IntPtr.Zero,
@@ -272,14 +279,12 @@ namespace ClientManager {
       //   out this.ProcessInfo
       // );
       int createProcessWin32Err = Marshal.GetLastWin32Error();
-      
-      Win32Native.CloseHandle(hAccessToken);
-      Win32Native.CloseHandle(hStdoutPipeWrite);
-      Win32Native.CloseHandle(hStderrPipeWrite);
-
       if (!procCreateSuccess) {
-        Win32Native.CloseHandle(hStdoutPipeRead);
-        Win32Native.CloseHandle(hStderrPipeRead);
+        Win32Native.CloseHandle(this.hAccessToken);
+        Win32Native.CloseHandle(this.hStdoutPipeWrite);
+        Win32Native.CloseHandle(this.hStderrPipeWrite);
+        Win32Native.CloseHandle(this.hStdoutPipeRead);
+        Win32Native.CloseHandle(this.hStderrPipeRead);
         throw new Exception("Failed to create process as user for SessionId '"+SessionId.ToString()+"'. Error code = "+createProcessWin32Err.ToString());
       }
     }
@@ -306,7 +311,7 @@ namespace ClientManager {
     public static extern bool CreatePipe(out IntPtr hReadPipe, out IntPtr hWritePipe, IntPtr lpSECURITY_ATTRIBUTES, uint nSize);
     
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern bool CreateProcessAsUserA(
+    public static extern bool CreateProcessAsUserW(
       IntPtr hToken,
       string? lpApplicationName,
       string lpCommandLine,

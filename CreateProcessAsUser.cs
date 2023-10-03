@@ -143,7 +143,7 @@ namespace ClientManager {
       }
     }
 
-    public void Start(int SessionId, string CommandLine, string WorkingDir) {
+    public void Start(int SessionId, string ProgramPath, string Arguments, string WorkingDir) {
       uint sessId = (uint) SessionId;
       
       IntPtr hImpersonateToken = new IntPtr.Zero;
