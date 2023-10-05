@@ -10,44 +10,59 @@ void main() {
   // string testCmdString = "Write-Output $env:USERPROFILE";
   // string testCmdB64 = System.Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(testCmdString));
   // string CommandLine = "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe -NoLogo -NonInteractive -ExecutionPolicy ByPass -WindowStyle Hidden -EncodedCommand "+testCmdB64;
-  string CommandLine = "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe -NoLogo -NonInteractive -ExecutionPolicy ByPass -WindowStyle Hidden -Command \"Write-Output $env:USERPROFILE\"";
+  string CommandLine = "C:\\Windows\\System32\\WindowsPowershell\\v1.0\\powershell.exe -NoLogo -NonInteractive -ExecutionPolicy ByPass -WindowStyle Hidden -Command \"$env:USERPROFILE\" | Tee-Object -FilePath \"C:\\Users\\2975\\Desktop\\testing.txt\"";
 
   string WorkingDir = "C:\\Users\\2975\\AppData\\Local";
   Process[] explorerProcs = Process.GetProcessesByName("explorer");
   if (explorerProcs.Length > 0) {
     
+    ClientManager.ProcessAsUser UserProc;
     try {
-      using (ClientManager.ProcessAsUser UserProc = new ClientManager.ProcessAsUser(explorerProcs[0].SessionId,CommandLine,WorkingDir)) {
-
-        // TimeSpan timeout = new TimeSpan(0,0,2);
-        int timeout = 2000;
-        Console.WriteLine("Going to wait for the process to exit");
-        if (!UserProc.WaitForProcess(timeout)) {
-          Console.WriteLine("Timed out waiting for command to finish.");
-          UserProc.TerminateProcess();
-          UserProc.Dispose();
-        }
-
-        string? stdout = UserProc.GetStdout();
-        string? stderr = UserProc.GetStderr();
-
-        if (stdout != null) {
-          Console.WriteLine("Standard Out:\n"+stdout+"\n");
-        } else {
-          Console.WriteLine("Standard Out was null");
-        }
-
-        if (stderr != null) {
-          Console.WriteLine("Standard Error:\n"+stderr+"\n");
-        } else {
-          Console.WriteLine("Standard Error was null");
-        }
-        UserProc.Dispose();
-      }
+      UserProc = new ClientManager.ProcessAsUser(explorerProcs[0].SessionId,CommandLine,WorkingDir);
     } catch (Exception ex) {
       Console.WriteLine("unable to start process: "+ex.Message);
       return;
     }
+    // TimeSpan timeout = new TimeSpan(0,0,2);
+    int timeout = 2000;
+    Console.WriteLine("Going to wait for the process to exit");
+    try {
+      if (!UserProc.WaitForProcess(timeout)) {
+        Console.WriteLine("Timed out waiting for command to finish.");
+        UserProc.TerminateProcess();
+        UserProc.Dispose();
+      }
+    } catch (Exception ex) {
+      Console.WriteLine("Error waiting for process: "+ex.Message);
+      return;
+    }
+
+    string? stdout = null;
+    try {
+      stdout = UserProc.GetStdout();
+    } catch (Exception ex) {
+      Console.WriteLine("Error retrieving StdOut: "+ex.Message);
+    }
+    string? stderr = null;
+    try {
+      stderr = UserProc.GetStderr();
+    } catch (Exception ex) {
+      Console.WriteLine("Error retrieving StdOut: "+ex.Message);
+    }
+
+    if (stdout != null) {
+      Console.WriteLine("Standard Out:\n"+stdout+"\n");
+    } else {
+      Console.WriteLine("Standard Out was null");
+    }
+
+    if (stderr != null) {
+      Console.WriteLine("Standard Error:\n"+stderr+"\n");
+    } else {
+      Console.WriteLine("Standard Error was null");
+    }
+    UserProc.Dispose();
+
   } else {
     Console.WriteLine("Did not find any process with name of 'explorer'");
   }
@@ -56,6 +71,25 @@ void main() {
 main();
 
 namespace ClientManager {
+  enum PROCESS_CREATE_FLAGS : int {
+    CREATE_BREAKAWAY_FROM_JOB = 0x01000000,
+    CREATE_DEFAULT_ERROR_MODE = 0x04000000,
+    CREATE_NEW_CONSOLE = 0x00000010,
+    CREATE_NEW_PROCESS_GROUP = 0x00000200,
+    CREATE_NO_WINDOW = 0x08000000,
+    CREATE_PROTECTED_PROCESS = 0x00040000,
+    CREATE_PRESERVE_CODE_AUTHZ_LEVEL = 0x02000000,
+    CREATE_SECURE_PROCESS = 0x00400000,
+    CREATE_SEPARATE_WOW_VDM = 0x00000800,
+    CREATE_SHARED_WOW_VDM = 0x00001000,
+    CREATE_SUSPENDED = 0x00000004,
+    CREATE_UNICODE_ENVIRONMENT = 0x00000400,
+    DEBUG_ONLY_THIS_PROCESS = 0x00000002,
+    DEBUG_PROCESS = 0x00000001,
+    DETACHED_PROCESS = 0x00000008,
+    EXTENDED_STARTUPINFO_PRESENT = 0x00080000,
+    INHERIT_PARENT_AFFINITY = 0x00010000
+  }
 
   [StructLayout(LayoutKind.Sequential)]
   struct PROCESS_INFORMATION {
@@ -123,15 +157,14 @@ namespace ClientManager {
   }
 
   public class ProcessAsUser : IDisposable {
-    private const int CREATE_UNICODE_ENVIRONMENT = 0x00000400;
-    private const int CREATE_NO_WINDOW = 0x08000000;
     private const int LOGON_WITH_PROFILE = 0x00000001;
     private const int STARTF_USESTDHANDLES = 0x00000100;
     private const int STARTF_USESHOWWINDOW = 0x00000001;
     private const int STILL_ACTIVE = 259;
     private const int WINDOW_HIDE = 0;
 
-    private PROCESS_INFORMATION ProcessInfo;
+    private int ProcessId;
+    private int ThreadId;
 
     private IntPtr hAccessToken;
     private IntPtr hStdoutPipeRead;
@@ -200,6 +233,10 @@ namespace ClientManager {
         throw new Exception("Unable to create environment block. Error code = "+lastWin32Error.ToString());
       }
 
+      SECURITY_ATTRIBUTES procAttrs = new SECURITY_ATTRIBUTES();
+      procAttrs.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
+      procAttrs.bInheritHandle = true;
+      PROCESS_INFORMATION ProcessInfo;
       Console.WriteLine("CommandLine = "+CommandLine);
       // dwCreationFlags = CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
       bool procCreateSuccess = Win32Native.CreateProcessAsUserW(
@@ -209,7 +246,7 @@ namespace ClientManager {
         IntPtr.Zero,
         IntPtr.Zero,
         false,
-        CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+        (int) (PROCESS_CREATE_FLAGS.CREATE_UNICODE_ENVIRONMENT),
         hEnvironment,
         WorkingDir, // Working directory
         ref ProcStartInfo,
@@ -229,25 +266,29 @@ namespace ClientManager {
       int createProcessWin32Err = Marshal.GetLastWin32Error();
       Win32Native.DestroyEnvironmentBlock(hEnvironment);
       Win32Native.CloseHandle(hEnvironment);
+      Win32Native.CloseHandle(this.hStdoutPipeWrite);
+      Win32Native.CloseHandle(this.hStderrPipeWrite);
       if (!procCreateSuccess) {
         Win32Native.CloseHandle(this.hAccessToken);
-        Win32Native.CloseHandle(this.hStdoutPipeWrite);
-        Win32Native.CloseHandle(this.hStderrPipeWrite);
         Win32Native.CloseHandle(this.hStdoutPipeRead);
         Win32Native.CloseHandle(this.hStderrPipeRead);
         throw new Exception("Failed to create process as user for SessionId '"+SessionId.ToString()+"'. Error code = "+createProcessWin32Err.ToString());
       }
+      this.ProcessId = ProcessInfo.dwProcessId;
+      this.ThreadId = ProcessInfo.dwThreadId;
+      Win32Native.CloseHandle(ProcessInfo.hProcess);
+      Win32Native.CloseHandle(ProcessInfo.hThread);
     }
 
     public void Dispose() {
       TerminateProcess();
       Win32Native.CloseHandle(hAccessToken);
       Win32Native.CloseHandle(hStderrPipeRead);
-      Win32Native.CloseHandle(hStderrPipeWrite);
+      // Win32Native.CloseHandle(hStderrPipeWrite);
       Win32Native.CloseHandle(hStdoutPipeRead);
-      Win32Native.CloseHandle(hStdoutPipeWrite);
-      Win32Native.CloseHandle(ProcessInfo.hProcess);
-      Win32Native.CloseHandle(ProcessInfo.hThread);
+      // Win32Native.CloseHandle(hStdoutPipeWrite);
+      // Win32Native.CloseHandle(ProcessInfo.hProcess);
+      // Win32Native.CloseHandle(ProcessInfo.hThread);
     }
 
     public string? GetStdout() {
@@ -294,38 +335,50 @@ namespace ClientManager {
       return null;
     }
 
-    public int ProcessId {
-      get {
-        return (int) ProcessInfo.dwProcessId;
-      }
-    }
+    // public int ProcessId {
+    //   get {
+    //     return (int) ProcessInfo.dwProcessId;
+    //   }
+    // }
 
     public void TerminateProcess() {
-      if (!this.CommandProcess.HasExited) {
-        this.CommandProcess.Kill();
-      }
+      try {
+        // using (Process p = Process.GetProcessById(this.ProcessInfo.dwProcessId)) {
+        using (Process p = Process.GetProcessById(this.ProcessId)) {
+          if (!p.HasExited) {
+            p.Kill();
+          }
+        }
+      } catch {}
     }
 
     public bool WaitForProcess(int Timeout) {
+    //   int exitCode;
+    //   if (!Win32Native.GetExitCodeThread(this.ProcessInfo.hThread, out exitCode)) {
+    //     throw new Exception("Error determining process status. Error code = "+Marshal.GetLastWin32Error());
+    //   }
 
-      int exitCode;
-      if (!GetExitCodeThread(this.ProcessInfo.hThread, out exitCode)) {
-        throw new Win32Exception("Error determining process status. Error code = "+Marshal.GetLastWin32Error());
-      }
+    //   int timer = 0;
+    //   while (exitCode == STILL_ACTIVE && timer < Timeout) {
+    //     Thread.Sleep(1000);
+    //     timer = timer + 1000;
+    //     if (!Win32Native.GetExitCodeThread(this.ProcessInfo.hThread, out exitCode)) {
+    //       throw new Exception("Error determining process status. Error code = "+Marshal.GetLastWin32Error());
+    //     }
+    //   }
 
-      int timer = 0;
-      while (exitCode == STILL_ACTIVE && timer < Timeout) {
-        Thread.Slep(1000);
-        timer = timer + 1000;
-        if (!GetExitCodeThread(this.ProcessInfo.hThread, out exitCode)) {
-          throw new Win32Exception("Error determining process status. Error code = "+Marshal.GetLastWin32Error());
+    //   if (timer < Timeout) {
+    //     return true;
+    //   }
+    //   return false;
+    // }
+      try {
+        using (Process p = Process.GetProcessById(this.ProcessId)) {
+          return p.WaitForExit(Timeout);
         }
-      }
-
-      if (timer < Timeout) {
+      } catch {
         return true;
       }
-      return false;
     }
   }
 
@@ -382,7 +435,7 @@ namespace ClientManager {
       out IntPtr DuplicateTokenHandle
     );
 
-    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern bool GetExitCodeThread(IntPtr  hThread, out int lpExitCode);
 
     [DllImport("Wtsapi32.dll")]
